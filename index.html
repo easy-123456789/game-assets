@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pokémon Sprite ZIP Downloader</title>
+    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+    <style>
+      :root {
+        --bg: #0f172a;
+        --panel: #111827;
+        --panel-border: #1f2937;
+        --text: #e5e7eb;
+        --muted: #94a3b8;
+        --accent: #fbbf24;
+        --accent-2: #22c55e;
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        font-family: Arial, Helvetica, sans-serif;
+        background: linear-gradient(135deg, #0f172a, #111827 35%, #1e293b);
+        color: var(--text);
+      }
+
+      .card {
+        width: min(92vw, 760px);
+        background: rgba(17, 24, 39, 0.9);
+        border: 1px solid var(--panel-border);
+        border-radius: 18px;
+        padding: 2rem;
+        box-shadow: 0 20px 45px rgba(0, 0, 0, 0.35);
+      }
+
+      h1 {
+        margin-top: 0;
+        margin-bottom: 0.5rem;
+        font-size: clamp(1.8rem, 3vw, 2.5rem);
+      }
+
+      p {
+        color: var(--muted);
+        line-height: 1.6;
+      }
+
+      .actions {
+        display: flex;
+        gap: 1rem;
+        flex-wrap: wrap;
+        align-items: center;
+        margin-top: 1.5rem;
+      }
+
+      button {
+        appearance: none;
+        border: none;
+        border-radius: 999px;
+        padding: 0.9rem 1.4rem;
+        font-weight: 700;
+        font-size: 1rem;
+        cursor: pointer;
+        transition: transform 0.15s ease, opacity 0.15s ease;
+      }
+
+      button:hover:not(:disabled) {
+        transform: translateY(-1px);
+      }
+
+      button:disabled {
+        opacity: 0.7;
+        cursor: wait;
+      }
+
+      .primary {
+        background: linear-gradient(135deg, var(--accent), #f59e0b);
+        color: #1f2937;
+      }
+
+      .secondary {
+        background: rgba(34, 197, 94, 0.15);
+        border: 1px solid rgba(34, 197, 94, 0.3);
+        color: #dcfce7;
+      }
+
+      #status {
+        margin-top: 1rem;
+        font-size: 0.95rem;
+        color: #dbeafe;
+        min-height: 1.25em;
+      }
+
+      .progress {
+        width: 100%;
+        height: 10px;
+        background: rgba(148, 163, 184, 0.15);
+        border-radius: 999px;
+        overflow: hidden;
+        margin-top: 1rem;
+      }
+
+      .progress-bar {
+        height: 100%;
+        width: 0%;
+        background: linear-gradient(90deg, var(--accent), var(--accent-2));
+        transition: width 0.2s ease;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>Pokémon Sprite ZIP Downloader</h1>
+      <p>
+        Downloads every Pokémon as a separate 80×80 PNG and packages them into a single ZIP file.
+      </p>
+
+      <div class="actions">
+        <button id="downloadBtn" class="primary">Download all Pokémon</button>
+        <button id="refreshBtn" class="secondary" type="button">Regenerate</button>
+      </div>
+
+      <div id="status">Ready.</div>
+      <div class="progress" aria-hidden="true">
+        <div id="progressBar" class="progress-bar"></div>
+      </div>
+    </div>
+
+    <script>
+      const POKEAPI_URL = 'https://pokeapi.co/api/v2/pokemon?limit=1025';
+      const downloadBtn = document.getElementById('downloadBtn');
+      const refreshBtn = document.getElementById('refreshBtn');
+      const statusEl = document.getElementById('status');
+      const progressBar = document.getElementById('progressBar');
+
+      function setStatus(message) {
+        statusEl.textContent = message;
+      }
+
+      function updateProgress(value) {
+        progressBar.style.width = `${value}%`;
+      }
+
+      function loadImageFromBlob(blob) {
+        return new Promise((resolve, reject) => {
+          const img = new Image();
+          img.onload = () => resolve(img);
+          img.onerror = reject;
+          img.src = URL.createObjectURL(blob);
+        });
+      }
+
+      function spriteUrl(id) {
+        return `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${id}.png`;
+      }
+
+      async function createPokemonSpriteBlob(id, name) {
+        const url = spriteUrl(id);
+        const response = await fetch(url, { mode: 'cors' });
+        if (!response.ok) {
+          throw new Error(`Could not load sprite for ${name}: ${response.status}`);
+        }
+
+        const blob = await response.blob();
+        const image = await loadImageFromBlob(blob);
+
+        const canvas = document.createElement('canvas');
+        canvas.width = 80;
+        canvas.height = 80;
+
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        const scale = Math.min(80 / image.width, 80 / image.height);
+        const drawWidth = image.width * scale;
+        const drawHeight = image.height * scale;
+        const x = (80 - drawWidth) / 2;
+        const y = (80 - drawHeight) / 2;
+
+        ctx.drawImage(image, x, y, drawWidth, drawHeight);
+
+        return new Promise((resolve) => {
+          canvas.toBlob((pngBlob) => resolve(pngBlob), 'image/png');
+        });
+      }
+
+      async function buildPokemonZip() {
+        const response = await fetch(POKEAPI_URL);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch Pokémon list (${response.status})`);
+        }
+
+        const data = await response.json();
+        const pokemon = data.results;
+
+        const zip = new JSZip();
+
+        for (let index = 0; index < pokemon.length; index += 1) {
+          const entry = pokemon[index];
+          const pokemonId = index + 1;
+          const fileName = `${String(pokemonId).padStart(3, '0')}-${entry.name}.png`;
+
+          setStatus(`Processing ${fileName} (${index + 1}/${pokemon.length})`);
+          updateProgress(((index + 1) / pokemon.length) * 100);
+
+          const pngBlob = await createPokemonSpriteBlob(pokemonId, entry.name);
+          zip.file(fileName, pngBlob);
+        }
+
+        setStatus('Creating ZIP file...');
+        const zipBlob = await zip.generateAsync({ type: 'blob' });
+        return zipBlob;
+      }
+
+      async function downloadAllPokemon() {
+        downloadBtn.disabled = true;
+        refreshBtn.disabled = true;
+        setStatus('Loading Pokémon list...');
+        updateProgress(0);
+
+        try {
+          const zipBlob = await buildPokemonZip();
+          const url = URL.createObjectURL(zipBlob);
+          const anchor = document.createElement('a');
+          anchor.href = url;
+          anchor.download = 'pokemon-80x80-sprites.zip';
+          document.body.appendChild(anchor);
+          anchor.click();
+          anchor.remove();
+          URL.revokeObjectURL(url);
+
+          setStatus('Download complete. ZIP file saved.');
+          updateProgress(100);
+        } catch (error) {
+          console.error(error);
+          setStatus(`Error: ${error.message}`);
+        } finally {
+          downloadBtn.disabled = false;
+          refreshBtn.disabled = false;
+        }
+      }
+
+      downloadBtn.addEventListener('click', downloadAllPokemon);
+      refreshBtn.addEventListener('click', () => {
+        updateProgress(0);
+        setStatus('Ready.');
+      });
+    </script>
+  </body>
+</html>
